@@ -10,7 +10,7 @@ input:
 }
 output: {"video_url": "<cloudinary secure_url>", "duration": <sec>, "scenes": <n>}
 """
-import os, subprocess, tempfile, json, uuid, requests
+import os, re, subprocess, tempfile, json, uuid, requests
 import runpod
 import cloudinary
 import cloudinary.uploader
@@ -28,16 +28,24 @@ VOICE_BY_LANG = {
     "zh": "en_US-amy-medium",
 }
 
-# Cloudinary из env (CLOUDINARY_URL ИЛИ отдельные ключи)
-if os.environ.get("CLOUDINARY_URL"):
-    cloudinary.config(secure=True)
-else:
-    cloudinary.config(
-        cloud_name=os.environ.get("CLOUDINARY_CLOUD_NAME"),
-        api_key=os.environ.get("CLOUDINARY_API_KEY"),
-        api_secret=os.environ.get("CLOUDINARY_API_SECRET"),
-        secure=True,
-    )
+# Cloudinary из env (CLOUDINARY_URL ИЛИ отдельные ключи) — парсим явно
+def _init_cloudinary():
+    cu = (os.environ.get("CLOUDINARY_URL") or "").strip()
+    if cu:
+        m = re.match(r"cloudinary://([^:]+):([^@]+)@(.+)", cu)
+        if m:
+            cloudinary.config(api_key=m.group(1), api_secret=m.group(2),
+                              cloud_name=m.group(3), secure=True)
+            return True
+    cn = os.environ.get("CLOUDINARY_CLOUD_NAME")
+    ak = os.environ.get("CLOUDINARY_API_KEY")
+    sec = os.environ.get("CLOUDINARY_API_SECRET")
+    if cn and ak and sec:
+        cloudinary.config(cloud_name=cn, api_key=ak, api_secret=sec, secure=True)
+        return True
+    return False
+
+CLOUD_OK = _init_cloudinary()
 
 
 def tts(text, voice, out):
@@ -57,6 +65,8 @@ def handler(job):
     scenes = inp.get("scenes") or []
     if not scenes:
         return {"error": "no scenes"}
+    if not CLOUD_OK:
+        return {"error": "cloudinary not configured: задай CLOUDINARY_URL в env эндпоинта"}
     lang = inp.get("lang", "ru")
     voice = inp.get("voice") or VOICE_BY_LANG.get(lang, "en_US-amy-medium")
 
