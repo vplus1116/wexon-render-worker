@@ -48,7 +48,42 @@ def _init_cloudinary():
 CLOUD_OK = _init_cloudinary()
 
 
-def tts(text, voice, out):
+import numpy as np
+import wave
+
+# Silero TTS (естественный голос). Кэш моделей в памяти воркера.
+_silero = {}
+SILERO_SPK = {"ru": "kseniya", "en": "en_0"}
+
+def _get_silero(key):
+    if key not in _silero:
+        import torch
+        torch.set_num_threads(4)
+        lang = "ru" if key == "ru" else "en"
+        spk = "v4_ru" if key == "ru" else "v3_en"
+        model, _ = torch.hub.load(repo_or_dir="snakers4/silero-models", model="silero_tts",
+                                  language=lang, speaker=spk, trust_repo=True)
+        model.to("cpu")
+        _silero[key] = model
+    return _silero[key]
+
+def _save_wav(path, audio, sr):
+    a = (np.clip(audio.numpy(), -1.0, 1.0) * 32767).astype("<i2")
+    with wave.open(path, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(sr); w.writeframes(a.tobytes())
+
+def tts(text, lang, voice, out):
+    text = (text or " ").strip() or " "
+    key = "ru" if lang in ("ru", "uk") else ("en" if lang in ("en", "es", "it") else None)
+    if key:
+        try:
+            model = _get_silero(key)
+            audio = model.apply_tts(text=text, speaker=SILERO_SPK[key], sample_rate=48000)
+            _save_wav(out, audio, 48000)
+            if os.path.getsize(out) > 1000:
+                return
+        except Exception as e:
+            print("[tts] silero fail -> piper:", str(e)[:200], flush=True)
     subprocess.run([PIPER, "--model", "%s/%s.onnx" % (VOICES, voice), "--output_file", out],
                    input=text, text=True, capture_output=True, check=True)
 
@@ -77,7 +112,7 @@ def handler(job):
             img = os.path.join(work, "img%d.png" % i)
             download(sc["image_url"], img)
             aud = os.path.join(work, "a%d.wav" % i)
-            tts(sc.get("text", "") or " ", voice, aud)
+            tts(sc.get("text", ""), lang, voice, aud)
             man_scenes.append({"image": img, "audio": aud,
                                "text": sc.get("subtitle", sc.get("text", ""))})
 

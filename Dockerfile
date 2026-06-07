@@ -27,6 +27,13 @@ RUN mkdir -p /app/voices \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Silero TTS (естественный голос): torch CPU + numpy + omegaconf, предзагрузка моделей в образ
+RUN pip install --no-cache-dir numpy omegaconf \
+ && pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+RUN python -c "import torch; \
+    torch.hub.load('snakers4/silero-models','silero_tts',language='ru',speaker='v4_ru',trust_repo=True); \
+    torch.hub.load('snakers4/silero-models','silero_tts',language='en',speaker='v3_en',trust_repo=True)"
+
 COPY render_t1.py handler.py ./
 COPY music/ /app/music/
 
