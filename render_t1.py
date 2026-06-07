@@ -25,25 +25,30 @@ def srt_time(t):
     return "%02d:%02d:%02d,%03d" % (h, m, s, ms)
 
 def make_scene(img, dur, out, idx):
-    """Вертикальный клип: размытый фон + картинка + надёжный Ken Burns (зум in/out + пан)."""
-    frames = int(dur * FPS) + 1
-    fade_out = max(0.0, dur - 0.5)
-    # линейные выражения по номеру кадра on — без условных веток, стабильно
+    """Вертикальный клип: размытый фон + картинка + Ken Burns.
+    КЛЮЧЕВОЕ: картинка подаётся ОДНИМ кадром, zoompan сам генерит d=frames кадров движения
+    (правильный канонический Ken Burns — без взрыва кадров и чёрного экрана)."""
+    frames = max(2, int(dur * FPS))
+    fade_out = max(0.0, dur - 0.45)
+    # движение по индексу ВЫХОДНОГО кадра on=0..frames-1 (плавно на всю сцену)
     if idx % 2 == 0:
-        zexpr = "z='min(1.0+0.0011*on,1.20)'"
-        xexpr = "x='iw/2-(iw/zoom/2)+sin(on/55)*25'"; yexpr = "y='ih/2-(ih/zoom/2)'"
+        zexpr = "z='1.0+0.14*on/%d'" % frames                       # zoom IN  1.00->1.14
+        xexpr = "x='iw/2-(iw/zoom/2)+sin(on/%d*3.14159)*40'" % frames
+        yexpr = "y='ih/2-(ih/zoom/2)'"
     else:
-        zexpr = "z='max(1.20-0.0011*on,1.0)'"
-        xexpr = "x='iw/2-(iw/zoom/2)'"; yexpr = "y='ih/2-(ih/zoom/2)+sin(on/55)*25'"
+        zexpr = "z='1.14-0.14*on/%d'" % frames                      # zoom OUT 1.14->1.00
+        xexpr = "x='iw/2-(iw/zoom/2)'"
+        yexpr = "y='ih/2-(ih/zoom/2)+sin(on/%d*3.14159)*40'" % frames
     vf = (
         "[0:v]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,boxblur=26:4,eq=brightness=-0.05,setsar=1[bg];"
         "[0:v]scale=%d:-2[fg];"
-        "[bg][fg]overlay=(W-w)/2:(H-h)/2,"
-        "zoompan=%s:d=%d:%s:%s:s=%dx%d:fps=%d,"
-        "fade=t=in:st=0:d=0.5,fade=t=out:st=%.2f:d=0.5,setsar=1,format=yuv420p"
+        "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[comp];"
+        "[comp]zoompan=%s:d=%d:%s:%s:s=%dx%d:fps=%d,"
+        "fade=t=in:st=0:d=0.4,fade=t=out:st=%.2f:d=0.4,format=yuv420p[v]"
     ) % (W, H, W, H, W, zexpr, frames, xexpr, yexpr, W, H, FPS, fade_out)
-    run(["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-t", "%.2f" % dur, "-i", img,
-         "-filter_complex", vf, "-r", str(FPS), "-c:v", "libx264", "-preset", "veryfast",
+    run(["ffmpeg", "-y", "-loglevel", "error", "-i", img,
+         "-filter_complex", vf, "-map", "[v]", "-frames:v", str(frames),
+         "-r", str(FPS), "-c:v", "libx264", "-preset", "veryfast",
          "-pix_fmt", "yuv420p", out])
 
 def main():
