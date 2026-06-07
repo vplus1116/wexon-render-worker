@@ -24,12 +24,12 @@ def srt_time(t):
     h = int(t // 3600); m = int((t % 3600) // 60); s = int(t % 60); ms = int(round((t - int(t)) * 1000))
     return "%02d:%02d:%02d,%03d" % (h, m, s, ms)
 
-def make_scene(img, dur, out, idx):
+def make_scene(img, dur, out, idx, is_first=False):
     """Вертикальный клип: размытый фон + картинка + Ken Burns.
-    КЛЮЧЕВОЕ: картинка подаётся ОДНИМ кадром, zoompan сам генерит d=frames кадров движения
-    (правильный канонический Ken Burns — без взрыва кадров и чёрного экрана)."""
+    КЛЮЧЕВОЕ: картинка подаётся ОДНИМ кадром, zoompan сам генерит d=frames кадров движения.
+    БЕЗ fade-out — между сценами жёсткие склейки (динамичнее, нет чёрных вспышек и чёрного финала).
+    Лёгкий fade-in от чёрного только у ПЕРВОЙ сцены."""
     frames = max(2, int(dur * FPS))
-    fade_out = max(0.0, dur - 0.45)
     # движение по индексу ВЫХОДНОГО кадра on=0..frames-1 (плавно на всю сцену)
     if idx % 2 == 0:
         zexpr = "z='1.0+0.14*on/%d'" % frames                       # zoom IN  1.00->1.14
@@ -39,13 +39,14 @@ def make_scene(img, dur, out, idx):
         zexpr = "z='1.14-0.14*on/%d'" % frames                      # zoom OUT 1.14->1.00
         xexpr = "x='iw/2-(iw/zoom/2)'"
         yexpr = "y='ih/2-(ih/zoom/2)+sin(on/%d*3.14159)*40'" % frames
+    fadein = "fade=t=in:st=0:d=0.4," if is_first else ""
     vf = (
         "[0:v]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,boxblur=26:4,eq=brightness=-0.05,setsar=1[bg];"
         "[0:v]scale=%d:-2[fg];"
         "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[comp];"
         "[comp]zoompan=%s:d=%d:%s:%s:s=%dx%d:fps=%d,"
-        "fade=t=in:st=0:d=0.4,fade=t=out:st=%.2f:d=0.4,format=yuv420p[v]"
-    ) % (W, H, W, H, W, zexpr, frames, xexpr, yexpr, W, H, FPS, fade_out)
+        "%sformat=yuv420p[v]"
+    ) % (W, H, W, H, W, zexpr, frames, xexpr, yexpr, W, H, FPS, fadein)
     run(["ffmpeg", "-y", "-loglevel", "error", "-i", img,
          "-filter_complex", vf, "-map", "[v]", "-frames:v", str(frames),
          "-r", str(FPS), "-c:v", "libx264", "-preset", "veryfast",
@@ -60,7 +61,7 @@ def main():
     for i, sc in enumerate(scenes):
         d = ffprobe_dur(sc["audio"]) + 0.35
         sv = os.path.join(work, "s%d.mp4" % i)
-        make_scene(sc["image"], d, sv, i)
+        make_scene(sc["image"], d, sv, i, is_first=(i == 0))
         scene_vids.append(sv)
         srt.append("%d\n%s --> %s\n%s\n" % (i + 1, srt_time(t + 0.15), srt_time(t + d),
                                             (sc.get("text", "") or "").strip()))
@@ -74,6 +75,8 @@ def main():
     run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", vlst,
          "-c:v", "libx264", "-preset", "veryfast", "-r", str(FPS), "-pix_fmt", "yuv420p",
          "-vsync", "cfr", body])
+    # реальная длительность видео-дорожки — чтобы не было чёрного хвоста в конце
+    total = ffprobe_dur(body)
 
     # озвучка: единый формат + склейка
     awav = []
@@ -96,9 +99,15 @@ def main():
 
     music = man.get("music")
     if music and os.path.exists(music):
+        # КЛЮЧЕВОЕ: музыку приводим к 48кГц (трек 44.1кГц + голос 48кГц иначе amix даёт «частит/заело»).
+        # Трек длиннее ролика — НИКАКОГО aloop. Плавный fade-in/out. Микс без нормализации.
+        fade_out_st = max(0.1, total - 1.0)
+        music_fx = ("aresample=48000,volume=0.34,afade=t=in:st=0:d=1.0,"
+                    "afade=t=out:st=%.2f:d=1.0") % fade_out_st
         fc = ("[0:v]subtitles='%s':force_style='%s'[v];"
-              "[1:a]%s[a1];[2:a]volume=0.28,aloop=loop=-1:size=2000000000,afade=t=in:st=0:d=1.5[a2];"
-              "[a1][a2]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]") % (srtf, style, voice_fx)
+              "[1:a]%s[a1];[2:a]%s[a2];"
+              "[a1][a2]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]") % (
+              srtf, style, voice_fx, music_fx)
         cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", body, "-i", voice, "-i", music,
                "-filter_complex", fc, "-map", "[v]", "-map", "[a]", "-t", "%.2f" % total]
     else:
