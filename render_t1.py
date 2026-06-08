@@ -111,6 +111,11 @@ def main():
     voice_fx = ("loudnorm=I=-15:TP=-1.5:LRA=11,highpass=f=85,lowpass=f=11000,"
                 "acompressor=threshold=-18dB:ratio=3:attack=8:release=180")
 
+    # плавное ЗАВЕРШЕНИЕ: лёгкий fade видео (0.4с) + затухание всего звука (0.6с) в самом конце
+    vfade = max(0.1, total - 0.4)
+    aout = max(0.1, total - 0.6)
+    vchain = "[0:v]subtitles='%s':force_style='%s',fade=t=out:st=%.2f:d=0.4[v]" % (srtf, style, vfade)
+
     music = man.get("music")
     if music and os.path.exists(music):
         # КЛЮЧЕВОЕ: музыку приводим к 48кГц (трек 44.1кГц + голос 48кГц иначе amix даёт «частит/заело»).
@@ -118,14 +123,14 @@ def main():
         fade_out_st = max(0.1, total - 1.0)
         music_fx = ("aresample=48000,volume=0.34,afade=t=in:st=0:d=1.0,"
                     "afade=t=out:st=%.2f:d=1.0") % fade_out_st
-        fc = ("[0:v]subtitles='%s':force_style='%s'[v];"
+        fc = (vchain + ";"
               "[1:a]%s[a1];[2:a]%s[a2];"
-              "[a1][a2]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]") % (
-              srtf, style, voice_fx, music_fx)
+              "[a1][a2]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
+              "afade=t=out:st=%.2f:d=0.6[a]") % (voice_fx, music_fx, aout)
         cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", body, "-i", voice, "-i", music,
                "-filter_complex", fc, "-map", "[v]", "-map", "[a]", "-t", "%.2f" % total]
     else:
-        fc = "[0:v]subtitles='%s':force_style='%s'[v];[1:a]%s[a]" % (srtf, style, voice_fx)
+        fc = (vchain + ";[1:a]%s,afade=t=out:st=%.2f:d=0.6[a]") % (voice_fx, aout)
         cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", body, "-i", voice,
                "-filter_complex", fc, "-map", "[v]", "-map", "[a]", "-t", "%.2f" % total]
     cmd += ["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
