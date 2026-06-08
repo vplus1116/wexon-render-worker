@@ -52,6 +52,17 @@ def make_scene(img, dur, out, idx, is_first=False):
          "-r", str(FPS), "-c:v", "libx264", "-preset", "veryfast",
          "-pix_fmt", "yuv420p", out])
 
+def make_clip_scene(clip, dur, out, is_first=False):
+    """T2: сцена из готового видео-клипа (Kling) — заполняем вертикальный холст 1080x1920
+    (scale-to-cover + центр-кроп), подгоняем под длину озвучки (луп+обрезка), без своего звука."""
+    fadein = "fade=t=in:st=0:d=0.4," if is_first else ""
+    vf = ("scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,setsar=1,fps=%d,"
+          "%sformat=yuv420p") % (W, H, W, H, FPS, fadein)
+    run(["ffmpeg", "-y", "-loglevel", "error", "-stream_loop", "-1", "-t", "%.2f" % dur,
+         "-i", clip, "-vf", vf, "-an", "-r", str(FPS), "-c:v", "libx264", "-preset", "veryfast",
+         "-pix_fmt", "yuv420p", out])
+
+
 def main():
     man = json.load(open(sys.argv[1]))
     out = man.get("out") or sys.argv[2]
@@ -61,7 +72,10 @@ def main():
     for i, sc in enumerate(scenes):
         d = ffprobe_dur(sc["audio"]) + 0.35
         sv = os.path.join(work, "s%d.mp4" % i)
-        make_scene(sc["image"], d, sv, i, is_first=(i == 0))
+        if sc.get("clip"):                       # T2: готовый видео-клип
+            make_clip_scene(sc["clip"], d, sv, is_first=(i == 0))
+        else:                                     # T1: картинка + Ken Burns
+            make_scene(sc["image"], d, sv, i, is_first=(i == 0))
         scene_vids.append(sv)
         srt.append("%d\n%s --> %s\n%s\n" % (i + 1, srt_time(t + 0.15), srt_time(t + d),
                                             (sc.get("text", "") or "").strip()))

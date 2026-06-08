@@ -109,12 +109,18 @@ def handler(job):
     man_scenes = []
     try:
         for i, sc in enumerate(scenes):
-            img = os.path.join(work, "img%d.png" % i)
-            download(sc["image_url"], img)
             aud = os.path.join(work, "a%d.wav" % i)
             tts(sc.get("text", ""), lang, voice, aud)
-            man_scenes.append({"image": img, "audio": aud,
-                               "text": sc.get("subtitle", sc.get("text", ""))})
+            entry = {"audio": aud, "text": sc.get("subtitle", sc.get("text", ""))}
+            if sc.get("video_url"):           # T2: готовый видео-клип (Kling/LTX)
+                clip = os.path.join(work, "clip%d.mp4" % i)
+                download(sc["video_url"], clip)
+                entry["clip"] = clip
+            else:                              # T1: картинка + Ken Burns
+                img = os.path.join(work, "img%d.png" % i)
+                download(sc["image_url"], img)
+                entry["image"] = img
+            man_scenes.append(entry)
 
         music = None
         if inp.get("music_url"):
